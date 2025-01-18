@@ -1,0 +1,12 @@
+{
+    "total_questions": 10,
+    "correct_answers": 0,
+    "incorrect_answers": 10,
+    "accuracy": 0.0,
+    "weak_topics": "structural organisation in animals ",
+    "strong_topics": "structural organisation in animals ",
+    "topic_accuracy": {
+        "structural organisation in animals ": 0.0
+    },
+    "persona": "Needs Improvement"
+}

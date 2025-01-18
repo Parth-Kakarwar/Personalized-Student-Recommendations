@@ -1,0 +1,164 @@
+# Import necessary libraries
+import pandas as pd
+import json
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# Load the data
+with open('Quiz Submission Data.json', 'r') as f:
+    quiz_submission_data = json.load(f)
+
+with open('Quiz Endpoint.json', 'r') as f:
+    quiz_endpoint_data = json.load(f)
+
+with open('Historical Quiz Data.json', 'r') as f:
+    historical_quiz_data = json.load(f)
+
+# Extract relevant details
+submission_df = pd.DataFrame([quiz_submission_data])
+questions_df = pd.DataFrame(quiz_endpoint_data['quiz']['questions'])
+historical_df = pd.DataFrame(historical_quiz_data)
+
+# Combine user responses with question metadata (Current Quiz Data)
+response_map = quiz_submission_data['response_map']
+response_df = pd.DataFrame({
+    'question_id': list(map(int, response_map.keys())),  # Ensure keys are integers
+    'selected_option_id': response_map.values()
+})
+response_df = response_df.merge(questions_df, left_on='question_id', right_on='id', how='left')
+
+# Analyze historical data (Previous quizzes)
+historical_responses = historical_df.explode('response_map')
+historical_responses['response_map'] = historical_responses['response_map'].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
+
+# Handle cases where 'response_map' could be an integer, ensuring we don't call .keys() on integers
+historical_responses['question_id'] = historical_responses['response_map'].apply(
+    lambda x: int(list(x.keys())[0]) if isinstance(x, dict) else None
+)
+historical_responses['selected_option_id'] = historical_responses['response_map'].apply(
+    lambda x: list(x.values())[0] if isinstance(x, dict) else None
+)
+
+# Ensure 'question_id' has no None values before converting to int
+historical_responses = historical_responses[historical_responses['question_id'].notna()]
+
+# Convert question_id to int
+historical_responses['question_id'] = historical_responses['question_id'].astype(int)
+
+# Ensure both question_id and id columns are of the same type (int64)
+questions_df['id'] = questions_df['id'].astype(int)
+
+# Merge historical responses with question metadata
+historical_responses = historical_responses.merge(questions_df, left_on='question_id', right_on='id', how='left')
+
+# Combine current and historical data
+combined_df = pd.concat([response_df, historical_responses], ignore_index=True)
+
+# Calculate performance by topic and difficulty level
+topic_performance = combined_df.groupby('topic')['selected_option_id'].count()
+difficulty_performance = combined_df.groupby('difficulty_level')['selected_option_id'].count()
+
+# Calculate correct and incorrect answers for each topic
+# Here, we assume that the correct answer is known (in real use, we'd compare with actual correct answers)
+combined_df['is_correct'] = combined_df['selected_option_id'].apply(lambda x: 1 if x == 'expected_value' else 0)  # Modify logic as needed
+topic_accuracy = combined_df.groupby('topic')['is_correct'].mean()
+
+# Generate insights
+insights = {
+    'total_questions': len(combined_df),
+    'correct_answers': combined_df['is_correct'].sum(),
+    'incorrect_answers': len(combined_df) - combined_df['is_correct'].sum(),
+    'accuracy': (combined_df['is_correct'].sum() / len(combined_df)) * 100,
+    'weak_topics': topic_accuracy.idxmin() if not topic_accuracy.empty else None,
+    'strong_topics': topic_accuracy.idxmax() if not topic_accuracy.empty else None,
+    'topic_accuracy': topic_accuracy.to_dict()  # Convert Series to dictionary
+}
+
+# Persona Classification based on Accuracy
+if insights['accuracy'] > 85:
+    persona = "High Achiever"
+elif insights['accuracy'] > 60:
+    persona = "Intermediate Learner"
+else:
+    persona = "Needs Improvement"
+
+insights['persona'] = persona
+
+# Visualize insights
+# Accuracy per Topic
+plt.figure(figsize=(10, 6))
+sns.barplot(x=list(insights['topic_accuracy'].keys()), y=list(insights['topic_accuracy'].values()))
+plt.title('Accuracy by Topic')
+plt.xlabel('Topics')
+plt.ylabel('Accuracy (%)')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig('topic_accuracy.png')
+plt.close()
+
+# Performance by Difficulty Level
+plt.figure(figsize=(8, 5))
+sns.barplot(x=difficulty_performance.index, y=difficulty_performance.values)
+plt.title('Performance by Difficulty Level (Current + Historical)')
+plt.xlabel('Difficulty Levels')
+plt.ylabel('Number of Questions Attempted')
+plt.tight_layout()
+plt.savefig('difficulty_performance.png')
+plt.close()
+
+# Generate Recommendations
+def generate_recommendations():
+    recommendations = []
+
+    # If accuracy is low, suggest focusing on weak topics
+    if insights['accuracy'] < 70:
+        recommendations.append(f"Focus on improving performance in the topic '{insights['weak_topics']}'.")
+
+    # If accuracy is above 85%, suggest practicing higher difficulty questions
+    if insights['accuracy'] > 85:
+        recommendations.append(f"Practice more high-difficulty questions in the topic '{insights['strong_topics']}'.")
+
+    # Suggest practicing more questions for weak areas
+    recommendations.append(f"Focus on practicing more questions in the weak topic '{insights['weak_topics']}'.")
+
+    # Suggest practicing lower difficulty questions for better understanding of weak topics
+    if insights['accuracy'] < 60:
+        recommendations.append("Practice lower difficulty questions to strengthen your foundation.")
+
+    return recommendations
+
+recommendations = generate_recommendations()
+
+# Helper function to recursively convert int64 to int in a dictionary
+def convert_int64_to_int(obj):
+    if isinstance(obj, dict):
+        return {k: convert_int64_to_int(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_int64_to_int(item) for item in obj]
+    elif isinstance(obj, np.int64):
+        return int(obj)  # Convert np.int64 to int
+    else:
+        return obj
+
+# Convert the insights dictionary to ensure all int64 values are converted to int
+insights = convert_int64_to_int(insights)
+
+# Save recommendations to a file
+with open('recommendations.txt', 'w') as f:
+    f.write("\n".join(recommendations))
+
+# Save insights summary
+with open('insights_summary2.txt', 'w') as f:
+    f.write(json.dumps(insights, indent=4))
+
+# Output for verification
+print("Insights and recommendations have been saved. Visualizations are ready for GitHub upload.")
+
+# Instructions for Colab:
+# To download the generated files (e.g., recommendations.txt, insights_summary.txt, and images):
+# from google.colab import files
+# files.download('recommendations.txt')
+# files.download('insights_summary2.txt')
+# files.download('topic_accuracy.png')
+# files.download('difficulty_performance.png')
